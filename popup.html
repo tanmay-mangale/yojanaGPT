@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YojanaGPT</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="extension-container">
+        <header class="app-header">
+            <div class="logo">
+                <h1>Yojana<span>GPT</span></h1>
+                <div class="status-dot"></div>
+            </div>
+            <p>Government Scheme Assistant</p>
+        </header>
+
+        <section class="summary-section">
+            <div class="summary-header">
+                <span class="icon">📋</span>
+                <h3>Scheme Summary</h3>
+            </div>
+            <div class="summary-card">
+                <div class="summary-item">
+                    <strong>Benefit:</strong> <span id="schemeBenefit">Financial assistance for farmers.</span>
+                </div>
+                <div class="summary-item">
+                    <strong>Eligibility:</strong> <span id="schemeEligibility">Landholding farmers with up to 2 hectares.</span>
+                </div>
+            </div>
+        </section>
+
+        <main class="chat-window" id="chatWindow">
+            <div class="message ai-msg">
+                👋 Namaste! I've analyzed this scheme. You can ask me about eligibility, documents, or how to apply!
+            </div>
+        </main>
+
+        <footer class="input-section">
+            <div class="input-wrapper">
+                <input type="text" id="userInput" placeholder="Ask about this scheme..." autocomplete="off">
+                <button id="sendBtn">
+                    <svg viewBox="0 0 24 24" width="18" height="18">
+                        <path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
+                    </svg>
+                </button>
+            </div>
+        </footer>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
