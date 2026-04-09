@@ -1,18 +1,16 @@
 {
-    "name":"YojanaGPT",
-    "description":"The browser extension for making government websites acessible",
-    "version":"1.0",
-    "manifest_version":3,
-    "permissions":["activeTab","scripting","storage"],
-    "host_permissions":["<all_urls>"],
-    "action":{
-        "default_popup":"popup.html"
-    },
-    "background":{
-        "service_worker":"background.js"
-    },
-    "content_scripts":[{
-        "matches":["<all_urls>"],
-        "js":["content.js"]
-    }]
+  "manifest_version": 3,
+  "name": "YojanaGPT",
+  "version": "1.0",
+  "permissions": ["activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
 }
