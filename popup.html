@@ -7,7 +7,8 @@
 </head>
 <body>
 <div class="extension-container">
-    
+
+    <!-- HEADER -->
     <header class="app-header">
         <div class="logo">
             <h1>Yojana<span>GPT</span></h1>
@@ -16,7 +17,7 @@
         <p>Government Scheme Assistant</p>
     </header>
 
-    
+    <!-- PAGE INFO -->
     <section class="summary-section">
         <div class="summary-header">
             <span>📄</span>
@@ -25,7 +26,7 @@
         <div class="summary-card">
             <div class="summary-item">
                 <strong>Title:</strong>
-                <span id="pageTitle"></span>
+                <span id="pageTitle">Reading...</span>
             </div>
             <div class="summary-item">
                 <strong>URL:</strong>
@@ -34,16 +35,25 @@
         </div>
     </section>
 
-    
+    <!-- STATUS -->
+    <section class="summary-section">
+        <div class="summary-card">
+            <div class="summary-item" id="highlightStatus">
+                ⏳ Reading page...
+            </div>
+        </div>
+    </section>
+
+    <!-- PAGE TEXT -->
     <main class="chat-window" id="chatWindow">
         <div class="message ai-msg" id="textOutput">
-            Reading page...
+            ⏳ Loading...
         </div>
     </main>
 
     <footer class="input-section">
         <div class="input-wrapper">
-            <input type="text" placeholder="Search here..." disabled />
+            <input type="text" placeholder="Coming soon..." disabled />
             <button disabled>
                 <svg viewBox="0 0 24 24" width="18" height="18">
                     <path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>

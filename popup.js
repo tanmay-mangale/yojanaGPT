@@ -5,17 +5,22 @@ window.addEventListener("DOMContentLoaded", async () => {
   chrome.tabs.sendMessage(tab.id, { action: "getPageData" }, (response) => {
 
     if (!response) {
-      document.getElementById("textOutput").textContent = "Could not read page. Refresh and try.";
+      document.getElementById("pageTitle").textContent = "Could not read page.";
+      document.getElementById("highlightStatus").textContent = "❌ Please refresh and try again.";
       return;
     }
 
-    // Fill title and URL
-    console.log(response.title)
+    // Fill page info
     document.getElementById("pageTitle").textContent = response.title;
     document.getElementById("pageURL").textContent = response.url;
 
-    // Show extracted text
+    // Show status
+    document.getElementById("highlightStatus").textContent =
+      "✅ Action links highlighted on the page!";
+
+    // Show page text
     document.getElementById("textOutput").textContent = response.text;
+
   });
 
-}); 
+});
