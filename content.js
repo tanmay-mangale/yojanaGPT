@@ -2,7 +2,113 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === "getPageData") {
 
-    const text = document.body.innerText;
+    // Prefer the "main content" area to avoid nav/footer noise.
+    function getMainText() {
+      const preferredSelectors = [
+        "main",
+        "article",
+        "[role='main']",
+        "#content",
+        "#main",
+        ".content",
+        ".main-content",
+        ".container",
+      ];
+
+      const blacklist = [
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "script",
+        "style",
+        "noscript",
+        "svg",
+        "canvas",
+        "iframe",
+        "[role='navigation']",
+        "[role='banner']",
+        "[role='contentinfo']",
+        ".navbar",
+        ".nav",
+        ".menu",
+        ".footer",
+        ".header",
+        ".social",
+        ".share",
+      ];
+
+      function digitRatio(str) {
+        if (!str) return 0;
+        const digits = (str.match(/[0-9]/g) || []).length;
+        return digits / Math.max(1, str.length);
+      }
+
+      function scoreEl(el) {
+        if (!el) return -1;
+        const txt = (el.innerText || "").trim();
+        const len = txt.length;
+        if (len < 400) return -1;
+        // Penalize blocks that are mostly numeric (charts/counters/state totals).
+        const dr = digitRatio(txt);
+        if (dr > 0.22 && len > 800) return -1;
+        const linkTextLen = [...el.querySelectorAll("a")]
+          .map((a) => (a.innerText || "").trim().length)
+          .reduce((a, b) => a + b, 0);
+        const linkRatio = len ? linkTextLen / len : 0;
+        // Prefer large text blocks that aren't mostly links.
+        return len * (1 - Math.min(0.85, linkRatio));
+      }
+
+      // Try explicit containers first.
+      const candidates = preferredSelectors
+        .map((sel) => document.querySelector(sel))
+        .filter(Boolean);
+
+      // Fallback: pick best among body descendants.
+      const bodyCandidates = [...document.body.querySelectorAll("main, article, section, div")]
+        .slice(0, 250); // cap for safety
+
+      const all = [...new Set([...candidates, ...bodyCandidates])].filter((el) => {
+        // skip blacklisted containers
+        return !blacklist.some((sel) => el.matches?.(sel));
+      });
+
+      let best = null;
+      let bestScore = -1;
+      for (const el of all) {
+        const s = scoreEl(el);
+        if (s > bestScore) {
+          bestScore = s;
+          best = el;
+        }
+      }
+
+      // Remove obvious noisy sections from the chosen container if possible.
+      if (best) {
+        // IMPORTANT: `innerText` on a detached/cloned node can be empty.
+        // Use `textContent` on the clone, and fall back to the original element's innerText.
+        const clone = best.cloneNode(true);
+        clone.querySelectorAll(blacklist.join(",")).forEach((n) => n.remove());
+        const fromClone = (clone.textContent || "").trim();
+        const fromOriginal = (best.innerText || "").trim();
+        return (fromClone.length >= 400 ? fromClone : fromOriginal).trim();
+      }
+
+      return (document.body.innerText || "").trim();
+    }
+
+    let text = getMainText();
+    // Safety fallback: if main extraction failed, use full page text.
+    if (!text || text.trim().length < 400) {
+      text = (document.body.innerText || "").trim();
+    }
+
+    // Final cleanup: collapse whitespace and strip very noisy repeated lines.
+    text = text
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
 
     const anchors = [...document.querySelectorAll("a")]
       .map(el => ({
