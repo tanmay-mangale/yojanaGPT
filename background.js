@@ -1,5 +1,5 @@
 // Paste your Gemini API key (Google AI Studio). Do not publish the extension with a real key.
-const GEMINI_API_KEY = "AIzaSyAh25qjBaHif6JdzMwSN9X_xF4NQMwr1xE";
+const GEMINI_API_KEY = "";
 
 async function getGeminiApiKey() {
   return GEMINI_API_KEY.trim();
