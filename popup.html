@@ -8,7 +8,6 @@
 <body>
 <div class="extension-container">
 
-    <!-- HEADER -->
     <header class="app-header">
         <div class="logo">
             <h1>Yojana<span>GPT</span></h1>
@@ -17,7 +16,6 @@
         <p>Government Scheme Assistant</p>
     </header>
 
-    <!-- PAGE INFO -->
     <section class="summary-section">
         <div class="summary-header">
             <span>📄</span>
@@ -35,7 +33,6 @@
         </div>
     </section>
 
-    <!-- STATUS -->
     <section class="summary-section">
         <div class="summary-card">
             <div class="summary-item" id="highlightStatus">
@@ -44,17 +41,19 @@
         </div>
     </section>
 
-    <!-- PAGE TEXT -->
     <main class="chat-window" id="chatWindow">
-        <div class="message ai-msg" id="textOutput">
+        <div class="chat-label">Scheme summary</div>
+        <div class="message ai-msg" id="summaryBlock">
             ⏳ Loading...
         </div>
+        <div class="chat-label chat-label-followup" id="followupLabel" hidden>Your questions</div>
+        <div id="chatMessages" class="chat-messages"></div>
     </main>
 
     <footer class="input-section">
-        <div class="input-wrapper">
-            <input type="text" placeholder="Coming soon..." disabled />
-            <button disabled>
+        <div class="input-wrapper" id="inputWrapper">
+            <input type="text" id="chatInput" placeholder="Ask about this scheme (loads after summary)..." disabled autocomplete="off" />
+            <button type="button" id="sendBtn" disabled title="Send" aria-label="Send">
                 <svg viewBox="0 0 24 24" width="18" height="18">
                     <path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
                 </svg>
@@ -66,4 +65,3 @@
 <script src="popup.js"></script>
 </body>
 </html>
-

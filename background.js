@@ -1,5 +1,5 @@
 // Paste your Gemini API key (Google AI Studio). Do not publish the extension with a real key.
-const GEMINI_API_KEY = "";
+const GEMINI_API_KEY = "AIzaSyAh25qjBaHif6JdzMwSN9X_xF4NQMwr1xE";
 
 async function getGeminiApiKey() {
   return GEMINI_API_KEY.trim();
@@ -7,21 +7,52 @@ async function getGeminiApiKey() {
 
 function buildSummarizePrompt({ title, url, text }) {
   return [
-    "You are YojanaGPT, a government scheme assistant.",
-    "Summarize the government scheme/page in short, simple language.",
-    "Use ONLY the provided page text. Do NOT browse the web or assume facts not present.",
-    "Ignore navigation menus, language lists, state lists, charts, big number tables, and footer links.",
+    "You are YojanaGPT, an expert on Indian government scheme pages.",
+    "Write a SHORT, scannable summary (not an essay). Use ONLY the page text below. No web search. No invented facts.",
+    "Ignore menus, footers, language lists, and huge state/stat tables unless essential.",
     "",
-    "Output format:",
-    "- Title line: scheme or page name (from text or page title).",
-    "- 1 short paragraph (2-4 lines).",
-    "- Then 5-10 bullets: benefits, who it is for, how to apply if mentioned, key dates/notes, exclusions if present.",
+    "Formatting rules (required):",
+    "- Start with 1–2 opening lines with a fitting emoji (e.g. 📋 🌾 💰).",
+    "- Use a clear emoji at the start of each section line below.",
+    "- Use **double asterisks** around the most important terms (amounts, scheme name, dates, mandatory steps).",
+    "- Use short bullet lines starting with • or - ; keep bullets tight (one line each where possible).",
+    "- Total length: roughly 120–220 words unless the page is tiny.",
+    "",
+    "Sections (keep each brief):",
+    "📌 **What it is** — 1–2 sentences.",
+    "💡 **Key benefits** — 2–4 bullets with numbers from the page.",
+    "👥 **Who can benefit** — 1–3 bullets.",
+    "📝 **How to apply / what to do** — 2–4 bullets (portal, eKYC, registration, status).",
+    "⚠️ **Important** — exclusions, deadlines, or warnings if present; else skip.",
     "",
     `Page title: ${title || "-"}`,
     `Page url: ${url || "-"}`,
     "",
     "Page text:",
     text || ""
+  ].join("\n");
+}
+
+function buildChatPrompt({ title, url, pageText, history, userMessage }) {
+  const excerpt = pageText.slice(0, 20000);
+  let historyBlock = "";
+  for (const m of history) {
+    const label = m.role === "user" ? "User" : "Assistant";
+    historyBlock += `${label}: ${m.content}\n\n`;
+  }
+  return [
+    "You are YojanaGPT. Answer using ONLY the page content below and the conversation so far.",
+    "If the answer is not in the page text, say clearly: 'This is not mentioned on the page you shared.' Do not invent rules, amounts, or dates.",
+    "Be concise. Use **bold** for key terms, a few emojis (📌 ✅ ⚠️) where natural, and short bullets when listing steps.",
+    "",
+    `PAGE TITLE: ${title || "-"}`,
+    `URL: ${url || "-"}`,
+    "",
+    "PAGE CONTENT (context):",
+    excerpt || "(empty)",
+    "",
+    historyBlock ? `CONVERSATION SO FAR:\n${historyBlock}` : "",
+    `LATEST USER QUESTION:\n${userMessage}`
   ].join("\n");
 }
 
@@ -115,7 +146,7 @@ async function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function geminiGenerate({ apiKey, prompt }) {
+async function geminiGenerate({ apiKey, prompt, maxOutputTokens = 2048 }) {
   const modelName = await pickWorkingModelName({ apiKey });
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent`;
 
@@ -133,8 +164,8 @@ async function geminiGenerate({ apiKey, prompt }) {
           body: JSON.stringify({
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
-              temperature: 0.2,
-              maxOutputTokens: 900
+              temperature: 0.25,
+              maxOutputTokens
             }
           })
         }
@@ -197,8 +228,6 @@ async function geminiGenerate({ apiKey, prompt }) {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
-    if (message?.action !== "summarizePage") return;
-
     const apiKey = await getGeminiApiKey();
     if (!apiKey) {
       sendResponse({
@@ -209,16 +238,53 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       return;
     }
 
-    const title = message?.payload?.title || "";
-    const url = message?.payload?.url || "";
-    const rawText = message?.payload?.text || "";
+    if (message?.action === "summarizePage") {
+      const title = message?.payload?.title || "";
+      const url = message?.payload?.url || "";
+      const rawText = message?.payload?.text || "";
+      const text = rawText.slice(0, 56000);
 
-    const text = rawText.slice(0, 24000);
+      const prompt = buildSummarizePrompt({ title, url, text });
+      const summary = await geminiGenerate({
+        apiKey,
+        prompt,
+        maxOutputTokens: 1536
+      });
 
-    const prompt = buildSummarizePrompt({ title, url, text });
-    const summary = await geminiGenerate({ apiKey, prompt });
+      sendResponse({ ok: true, summary });
+      return;
+    }
 
-    sendResponse({ ok: true, summary });
+    if (message?.action === "chatAboutScheme") {
+      const title = message?.payload?.title || "";
+      const url = message?.payload?.url || "";
+      const pageText = message?.payload?.text || "";
+      const history = Array.isArray(message?.payload?.history)
+        ? message.payload.history
+        : [];
+      const userMessage = String(message?.payload?.userMessage || "").trim();
+
+      if (!userMessage) {
+        sendResponse({ ok: false, error: "Empty message." });
+        return;
+      }
+
+      const prompt = buildChatPrompt({
+        title,
+        url,
+        pageText,
+        history,
+        userMessage
+      });
+      const reply = await geminiGenerate({
+        apiKey,
+        prompt,
+        maxOutputTokens: 2048
+      });
+
+      sendResponse({ ok: true, reply });
+      return;
+    }
   })().catch((err) => {
     let msg = err?.message || String(err);
     if (err?.name === "AbortError") {
