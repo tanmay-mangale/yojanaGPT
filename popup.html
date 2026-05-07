@@ -42,7 +42,16 @@
     </section>
 
     <main class="chat-window" id="chatWindow">
-        <div class="chat-label">Scheme summary</div>
+        <div class="summary-toolbar-wrap">
+            <div class="chat-label">Scheme summary</div>
+            <div class="translate-toolbar" id="translateToolbar" hidden>
+                <span class="translate-label">Translate:</span>
+                <button type="button" class="btn-translate" id="btnLangEn" title="Show original English summary">English</button>
+                <button type="button" class="btn-translate" id="btnLangHi" title="Translate summary to Hindi">हिंदी</button>
+                <button type="button" class="btn-translate" id="btnLangMr" title="Translate summary to Marathi">मराठी</button>
+            </div>
+        </div>
+        <p class="translate-error" id="translateError" hidden></p>
         <div class="message ai-msg" id="summaryBlock">
             ⏳ Loading...
         </div>

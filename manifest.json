@@ -3,7 +3,11 @@
   "name": "YojanaGPT",
   "version": "1.0",
   "permissions": ["activeTab", "storage"],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:11434/*",
+    "http://localhost:11434/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
@@ -17,4 +21,3 @@
     }
   ]
 }
-

@@ -1,10 +1,116 @@
-const SUMMARY_TIMEOUT_MS = 100000;
+/** Must be ≥ background Ollama fetch timeout so the popup does not give up first. */
+const SUMMARY_TIMEOUT_MS = 250000;
 
 /** @type {{ title: string, url: string, text: string } | null} */
 let pageSnapshot = null;
 
 /** @type {{ role: 'user' | 'assistant', content: string }[]} */
 let chatHistory = [];
+
+/** English summary from Ollama (markdown); used for हिंदी / मराठी translation. */
+let lastSummaryEnglish = "";
+
+function hideTranslateError() {
+  const el = document.getElementById("translateError");
+  if (!el) return;
+  el.textContent = "";
+  el.setAttribute("hidden", "");
+}
+
+function showTranslateError(msg) {
+  const el = document.getElementById("translateError");
+  if (!el) return;
+  el.textContent = msg;
+  el.removeAttribute("hidden");
+}
+
+function setTranslateActive(locale) {
+  const btnEn = document.getElementById("btnLangEn");
+  const btnHi = document.getElementById("btnLangHi");
+  const btnMr = document.getElementById("btnLangMr");
+  btnEn?.classList.toggle("active", locale === "en");
+  btnHi?.classList.toggle("active", locale === "hi");
+  btnMr?.classList.toggle("active", locale === "mr");
+}
+
+function setTranslateButtonsDisabled(disabled) {
+  for (const id of ["btnLangEn", "btnLangHi", "btnLangMr"]) {
+    const b = document.getElementById(id);
+    if (b) b.disabled = disabled;
+  }
+}
+
+function wireTranslateButtons() {
+  const summaryBlock = document.getElementById("summaryBlock");
+  document.getElementById("btnLangEn")?.addEventListener("click", () => {
+    if (!lastSummaryEnglish) return;
+    hideTranslateError();
+    setFormattedHtml(summaryBlock, lastSummaryEnglish);
+    setTranslateActive("en");
+  });
+  document.getElementById("btnLangHi")?.addEventListener("click", () => {
+    void translateSummaryTo("hi");
+  });
+  document.getElementById("btnLangMr")?.addEventListener("click", () => {
+    void translateSummaryTo("mr");
+  });
+}
+
+async function translateSummaryTo(locale) {
+  const summaryBlock = document.getElementById("summaryBlock");
+  if (!lastSummaryEnglish || (locale !== "hi" && locale !== "mr")) return;
+
+  hideTranslateError();
+  setTranslateButtonsDisabled(true);
+  setPlainMessage(
+    summaryBlock,
+    locale === "hi"
+      ? "⏳ Translating summary to Hindi…"
+      : "⏳ Translating summary to Marathi…"
+  );
+
+  try {
+    const result = await withTimeout(
+      sendMessageAsync({
+        action: "translateSummary",
+        payload: { text: lastSummaryEnglish, locale }
+      }),
+      SUMMARY_TIMEOUT_MS,
+      "Translation timed out"
+    );
+
+    if (!result || typeof result !== "object") {
+      showTranslateError("No response from extension.");
+      setFormattedHtml(summaryBlock, lastSummaryEnglish);
+      setTranslateActive("en");
+      return;
+    }
+
+    if (!result.ok) {
+      showTranslateError(result.error || "Translation failed.");
+      setFormattedHtml(summaryBlock, lastSummaryEnglish);
+      setTranslateActive("en");
+      return;
+    }
+
+    const translated = (result.translated || "").trim();
+    if (!translated) {
+      showTranslateError("Model returned empty translation.");
+      setFormattedHtml(summaryBlock, lastSummaryEnglish);
+      setTranslateActive("en");
+      return;
+    }
+
+    setFormattedHtml(summaryBlock, translated);
+    setTranslateActive(locale);
+  } catch (e) {
+    showTranslateError(e?.message || String(e));
+    setFormattedHtml(summaryBlock, lastSummaryEnglish);
+    setTranslateActive("en");
+  } finally {
+    setTranslateButtonsDisabled(false);
+  }
+}
 
 function sendMessageAsync(message) {
   return new Promise((resolve, reject) => {
@@ -181,6 +287,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   const chatInput = document.getElementById("chatInput");
 
   sendBtn.addEventListener("click", () => sendChat());
+  wireTranslateButtons();
   chatInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -211,7 +318,10 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.getElementById("highlightStatus").textContent =
       "✅ Action links highlighted on the page!";
 
-    setPlainMessage(summaryBlock, "⏳ Summarising this scheme with Gemini...");
+    setPlainMessage(
+      summaryBlock,
+      "⏳ Summarising with Ollama… (first load of a model can take 1–3 min on CPU — keep this popup open.)"
+    );
 
     try {
       const result = await withTimeout(
@@ -243,10 +353,12 @@ window.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
-      setFormattedHtml(
-        summaryBlock,
-        result.summary || "(No summary returned.)"
-      );
+      const summaryText = result.summary || "(No summary returned.)";
+      lastSummaryEnglish = summaryText;
+      setFormattedHtml(summaryBlock, summaryText);
+      document.getElementById("translateToolbar")?.removeAttribute("hidden");
+      hideTranslateError();
+      setTranslateActive("en");
       enableChat();
     } catch (e) {
       setPlainMessage(summaryBlock, `❌ ${e?.message || String(e)}`);

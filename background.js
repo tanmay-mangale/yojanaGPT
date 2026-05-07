@@ -1,8 +1,38 @@
-// Paste your Gemini API key (Google AI Studio). Do not publish the extension with a real key.
-const GEMINI_API_KEY = "";
+// Ollama runs locally — no cloud API key. Install from https://ollama.com then:
+//   ollama pull llama3.2
+// Or set OLLAMA_MODEL below to a model you already have (e.g. qwen2.5:7b, mistral).
+//
+// If the popup shows "Ollama HTTP 403": Ollama blocks unknown browser Origins. Add a
+// Windows user env var OLLAMA_ORIGINS = * (or chrome-extension://*) then fully quit
+// and restart Ollama (tray icon → Quit). See Ollama docs for OLLAMA_ORIGINS.
 
-async function getGeminiApiKey() {
-  return GEMINI_API_KEY.trim();
+/** Base URL without trailing slash */
+const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
+
+/** If empty, the first installed model matching MODEL_PREFERENCE_ORDER is used. */
+const OLLAMA_MODEL = "";
+
+/** Prefer larger / newer models for clearer summaries (first match wins). */
+const MODEL_PREFERENCE_ORDER = [
+  "llama3.3",
+  "llama3.2",
+  "llama3.1",
+  "llama3",
+  "qwen2.5",
+  "qwen2",
+  "mistral-nemo",
+  "mistral",
+  "mixtral",
+  "gemma2",
+  "phi3",
+  "phi4",
+  "deepseek-v2",
+  "deepseek-coder",
+  "deepseek-r1"
+];
+
+function getOllamaBaseUrl() {
+  return String(OLLAMA_BASE_URL || "http://127.0.0.1:11434").replace(/\/+$/, "");
 }
 
 function buildSummarizePrompt({ title, url, text }) {
@@ -12,7 +42,7 @@ function buildSummarizePrompt({ title, url, text }) {
     "Ignore menus, footers, language lists, and huge state/stat tables unless essential.",
     "",
     "Formatting rules (required):",
-    "- Start with 1–2 opening lines with a fitting emoji (e.g. 📋 🌾 💰).",
+    "- Start with 1–2 opening lines with a fitting emoji (e.g. 📋,🌾,💰,🎓,👨‍🎓,🏀,💼,🍛,🌏,👪).",
     "- Use a clear emoji at the start of each section line below.",
     "- Use **double asterisks** around the most important terms (amounts, scheme name, dates, mandatory steps).",
     "- Use short bullet lines starting with • or - ; keep bullets tight (one line each where possible).",
@@ -56,10 +86,49 @@ function buildChatPrompt({ title, url, pageText, history, userMessage }) {
   ].join("\n");
 }
 
+const TRANSLATE_LOCALES = { hi: "Hindi", mr: "Marathi" };
+
+function buildTranslatePrompt({ summaryText, locale }) {
+  const lang = TRANSLATE_LOCALES[locale] || "Hindi";
+  const scriptNote =
+    locale === "mr"
+      ? "Use Devanagari script as standard for Marathi."
+      : "Use Devanagari script as standard for Hindi.";
+  return [
+    "You are an expert translator for Indian government scheme summaries.",
+    `Translate the ENTIRE text below into ${lang}. ${scriptNote}`,
+    "",
+    "Rules (required):",
+    "- Preserve structure: same line breaks, bullet characters (• or -), section flow, and emojis.",
+    "- Keep **double asterisks** around translated important terms (same phrase boundaries as the source).",
+    "- Formal, clear tone suitable for citizens reading about schemes.",
+    "- Do not add preambles, notes, or \"Here is the translation\" — output ONLY the translated summary.",
+    "",
+    "TEXT:",
+    summaryText || ""
+  ].join("\n");
+}
+
 let cachedModelName = "";
 
-const FETCH_TIMEOUT_MS = 90000;
-const LIST_MODELS_TIMEOUT_MS = 25000;
+/** Long enough for cold model load + CPU inference; popup should match. */
+const FETCH_TIMEOUT_MS = 240000;
+const LIST_MODELS_TIMEOUT_MS = 15000;
+
+/** Huge pages + num_ctx 32k are very slow on CPU; cap input and context for reliable replies. */
+const MAX_SUMMARY_PAGE_CHARS = 22000;
+const MAX_CHAT_PAGE_CHARS = 20000;
+
+/**
+ * Ollama allocates KV cache from num_ctx — keep it tight to speed up summaries on laptops.
+ * Rough token guess: ~4 chars per token; leave room for the answer.
+ */
+function numCtxForPrompt(promptLength) {
+  const estTokens = Math.ceil(promptLength / 4);
+  const want = Math.min(16384, Math.max(4096, estTokens + 2800));
+  const step = 1024;
+  return Math.ceil(want / step) * step;
+}
 
 function fetchWithTimeout(url, options = {}) {
   const ctrl = new AbortController();
@@ -69,184 +138,153 @@ function fetchWithTimeout(url, options = {}) {
   );
 }
 
-async function listGeminiModels({ apiKey, apiVersion }) {
-  const base = `https://generativelanguage.googleapis.com/${apiVersion}/models`;
+async function listOllamaModels(baseUrl) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), LIST_MODELS_TIMEOUT_MS);
-  const res = await fetch(`${base}?key=${encodeURIComponent(apiKey)}`, {
+  const res = await fetch(`${baseUrl}/api/tags`, {
     signal: ctrl.signal
   }).finally(() => clearTimeout(timer));
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
     throw new Error(
-      `ListModels HTTP ${res.status}: ${errText || res.statusText}`
+      `Ollama list models HTTP ${res.status}: ${errText || res.statusText}`
     );
   }
   const data = await res.json();
-  return Array.isArray(data?.models) ? data.models : [];
+  const models = Array.isArray(data?.models) ? data.models : [];
+  return models.map((m) => m?.name).filter((n) => typeof n === "string" && n);
 }
 
-async function pickWorkingModelName({ apiKey }) {
+async function pickWorkingModelName(baseUrl) {
   if (cachedModelName) return cachedModelName;
 
-  const versionsToTry = ["v1beta", "v1"];
-  const preferredContains = [
-    "gemini-2.5-flash",
-    "gemini-flash",
-    "gemini-3-flash",
-    "flash"
-  ];
+  const configured = String(OLLAMA_MODEL || "").trim();
+  const names = await listOllamaModels(baseUrl);
+  if (!names.length) {
+    throw new Error(
+      "No Ollama models found. Run: ollama pull llama3.2 (or another model), then retry."
+    );
+  }
 
-  for (const apiVersion of versionsToTry) {
-    const models = await listGeminiModels({ apiKey, apiVersion });
-    const names = models
-      .map((m) => m?.name)
-      .filter((n) => typeof n === "string" && n.startsWith("models/"));
-
-    for (const pref of preferredContains) {
-      const match = names.find((n) => n.toLowerCase().includes(pref));
-      if (match) {
-        cachedModelName = match;
-        return cachedModelName;
-      }
+  if (configured) {
+    const exact = names.find((n) => n === configured);
+    if (exact) {
+      cachedModelName = exact;
+      return cachedModelName;
     }
+    const tagNoVer = configured.split(":")[0].toLowerCase();
+    const fuzzy = names.find(
+      (n) =>
+        n.toLowerCase() === configured.toLowerCase() ||
+        n.toLowerCase().startsWith(tagNoVer + ":")
+    );
+    if (fuzzy) {
+      cachedModelName = fuzzy;
+      return cachedModelName;
+    }
+    /* configured name not installed — fall back to best available */
+  }
 
-    if (names[0]) {
-      cachedModelName = names[0];
+  const lower = names.map((n) => ({ n, l: n.toLowerCase() }));
+  for (const pref of MODEL_PREFERENCE_ORDER) {
+    const p = pref.toLowerCase();
+    const hit = lower.find(({ l }) => l.includes(p));
+    if (hit) {
+      cachedModelName = hit.n;
       return cachedModelName;
     }
   }
 
-  throw new Error("No models available for this API key.");
+  cachedModelName = names[0];
+  return cachedModelName;
 }
 
-function parseRetrySecondsFrom429Body(errText) {
+/**
+ * Long scheme pages need a large context window; num_ctx is capped by the model in Ollama.
+ */
+async function ollamaGenerate({
+  baseUrl,
+  prompt,
+  maxOutputTokens = 2048,
+  numCtx: numCtxArg
+}) {
+  const model = await pickWorkingModelName(baseUrl);
+  const url = `${baseUrl}/api/generate`;
+  const numCtx =
+    typeof numCtxArg === "number" && numCtxArg > 0
+      ? numCtxArg
+      : numCtxForPrompt(prompt.length);
+
+  let res;
   try {
-    const j = JSON.parse(errText);
-    const details = j?.error?.details;
-    if (Array.isArray(details)) {
-      for (const d of details) {
-        if (d?.["@type"]?.includes("RetryInfo") && d?.retryDelay) {
-          const s = String(d.retryDelay);
-          const m = s.match(/^(\d+)s$/);
-          if (m) return parseInt(m[1], 10);
+    res = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt,
+        stream: false,
+        options: {
+          temperature: 0.25,
+          top_p: 0.92,
+          num_predict: maxOutputTokens,
+          num_ctx: numCtx,
+          repeat_penalty: 1.08
         }
-      }
+      })
+    });
+  } catch (e) {
+    const name = e && e.name;
+    if (name === "AbortError") {
+      throw new Error(
+        `Ollama request timed out after ${FETCH_TIMEOUT_MS / 1000}s. Is Ollama running? Try a smaller page or a faster model.`
+      );
     }
-    const msg = j?.error?.message || "";
-    const m2 = msg.match(/retry in ([\d.]+)s/i);
-    if (m2) return Math.ceil(parseFloat(m2[1], 10));
-  } catch {
-    /* ignore */
+    const msg = e?.message || String(e);
+    if (/fetch|network|failed|load/i.test(msg) || name === "TypeError") {
+      throw new Error(
+        `Cannot reach Ollama at ${baseUrl}. Start the Ollama app, then retry. (${msg})`
+      );
+    }
+    throw e;
   }
-  return 12;
-}
 
-async function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-async function geminiGenerate({ apiKey, prompt, maxOutputTokens = 2048 }) {
-  const modelName = await pickWorkingModelName({ apiKey });
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent`;
-
-  const maxAttempts = 2;
-  let lastErrText = "";
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    let res;
-    try {
-      res = await fetchWithTimeout(
-        `${endpoint}?key=${encodeURIComponent(apiKey)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.25,
-              maxOutputTokens
-            }
-          })
-        }
-      );
-    } catch (e) {
-      const name = e && e.name;
-      if (name === "AbortError") {
-        throw new Error(
-          `Gemini request timed out after ${FETCH_TIMEOUT_MS / 1000}s. Check network or try again.`
-        );
-      }
-      throw e;
-    }
-
-    if (res.status === 429) {
-      lastErrText = await res.text().catch(() => "");
-      if (attempt < maxAttempts) {
-        const waitSec = parseRetrySecondsFrom429Body(lastErrText);
-        await sleep(waitSec * 1000 + 500);
-        continue;
-      }
-      throw new Error(
-        `Gemini HTTP 429 (quota/rate limit). Free tier is limited (often ~20 requests/day per model). ` +
-          `Enable billing in Google AI Studio for higher limits, or wait and retry. Raw: ${lastErrText}`
-      );
-    }
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`Gemini HTTP ${res.status}: ${errText || res.statusText}`);
-    }
-
-    const data = await res.json();
-    if (data?.promptFeedback?.blockReason) {
-      throw new Error(
-        `Prompt blocked: ${data.promptFeedback.blockReason}`
-      );
-    }
-    const cand = data?.candidates?.[0];
-    const finish = cand?.finishReason;
-    const text =
-      cand?.content?.parts
-        ?.map((p) => p?.text)
-        .filter(Boolean)
-        .join("") || "";
-
-    const trimmed = text.trim();
-    if (trimmed) return trimmed;
-
-    const block = cand?.safetyRatings
-      ? JSON.stringify(cand.safetyRatings)
-      : "";
+  if (res.status === 404) {
+    const base = model.split(":")[0] || model;
     throw new Error(
-      `Gemini returned no text (finishReason: ${finish || "unknown"}). ${block ? "Safety: " + block : "Try shorter page text or check API key."}`
+      `Ollama: model "${model}" not found. Run: ollama pull ${base}`
     );
   }
 
-  throw new Error(lastErrText || "Gemini request failed after retries.");
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Ollama HTTP ${res.status}: ${errText || res.statusText}`);
+  }
+
+  const data = await res.json();
+  const text = typeof data?.response === "string" ? data.response : "";
+  const trimmed = text.trim();
+  if (trimmed) return trimmed;
+
+  const detail = data?.error || "empty response";
+  throw new Error(
+    `Ollama returned no text (model: ${model}). ${detail}. Try another model or shorten the page.`
+  );
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
-    const apiKey = await getGeminiApiKey();
-    if (!apiKey) {
-      sendResponse({
-        ok: false,
-        error:
-          "Missing Gemini API key. Set GEMINI_API_KEY at the top of background.js."
-      });
-      return;
-    }
+    const baseUrl = getOllamaBaseUrl();
 
     if (message?.action === "summarizePage") {
       const title = message?.payload?.title || "";
       const url = message?.payload?.url || "";
       const rawText = message?.payload?.text || "";
-      const text = rawText.slice(0, 56000);
+      const text = rawText.slice(0, MAX_SUMMARY_PAGE_CHARS);
 
       const prompt = buildSummarizePrompt({ title, url, text });
-      const summary = await geminiGenerate({
-        apiKey,
+      const summary = await ollamaGenerate({
+        baseUrl,
         prompt,
         maxOutputTokens: 1536
       });
@@ -258,7 +296,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.action === "chatAboutScheme") {
       const title = message?.payload?.title || "";
       const url = message?.payload?.url || "";
-      const pageText = message?.payload?.text || "";
+      const pageText = (message?.payload?.text || "").slice(0, MAX_CHAT_PAGE_CHARS);
       const history = Array.isArray(message?.payload?.history)
         ? message.payload.history
         : [];
@@ -276,8 +314,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         history,
         userMessage
       });
-      const reply = await geminiGenerate({
-        apiKey,
+      const reply = await ollamaGenerate({
+        baseUrl,
         prompt,
         maxOutputTokens: 2048
       });
@@ -285,10 +323,38 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: true, reply });
       return;
     }
+
+    if (message?.action === "translateSummary") {
+      const summaryText = String(message?.payload?.text || "").trim();
+      const locale = message?.payload?.locale;
+      if (!summaryText) {
+        sendResponse({ ok: false, error: "Nothing to translate." });
+        return;
+      }
+      if (locale !== "hi" && locale !== "mr") {
+        sendResponse({ ok: false, error: "Invalid locale (use hi or mr)." });
+        return;
+      }
+      const clipped = summaryText.slice(0, 14000);
+      const prompt = buildTranslatePrompt({ summaryText: clipped, locale });
+      const translated = await ollamaGenerate({
+        baseUrl,
+        prompt,
+        maxOutputTokens: 2048
+      });
+      sendResponse({ ok: true, translated });
+      return;
+    }
+
+    sendResponse({
+      ok: false,
+      error: `Unknown action: ${String(message?.action || "")}`
+    });
   })().catch((err) => {
     let msg = err?.message || String(err);
     if (err?.name === "AbortError") {
-      msg = "List models / network timed out. Check connection and API key.";
+      msg =
+        "Ollama list-models / request timed out. Ensure Ollama is running and not overloaded.";
     }
     sendResponse({ ok: false, error: msg });
   });
