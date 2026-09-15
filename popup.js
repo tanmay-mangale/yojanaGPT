@@ -8,7 +8,7 @@ let pageSnapshot = null;
 let chatHistory = [];
 
 /** English summary from Ollama (markdown); used for हिंदी / मराठी translation. */
-let lastSummaryEnglish = "";
+let lastSummaryEnglish = " ";
 
 function hideTranslateError() {
   const el = document.getElementById("translateError");
@@ -320,7 +320,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     setPlainMessage(
       summaryBlock,
-      "⏳ Summarising with Ollama… (first load of a model can take 1–3 min on CPU — keep this popup open.)"
+      "⏳ Summarising ......"
     );
 
     try {
